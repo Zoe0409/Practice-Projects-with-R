@@ -1,0 +1,348 @@
+---
+title: "Blade’s ground-travel expenses analysis"
+author: "Zoe Huang"
+date: ""
+output:
+  html_document:
+    css: style.css
+    theme: paper
+    highlight: zenburn
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    number_sections: true
+---
+  
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(echo=FALSE, eval = TRUE, comment="", warning = FALSE, message = FALSE, tidy.opts=list(width.cutoff=55), tidy = TRUE)
+
+```
+
+```{r packages}
+library(openxlsx)
+library(data.table)
+library(DT)
+library(lubridate)
+library(ggplot2)
+library(dplyr)
+library(tidyverse) ## A set of tools for Data manipulation and visualization
+library(lubridate) ## for date time manipulation
+library(scales) ## Formatting numbers and values
+#library(hrbrthemes)
+library(extrafont) # More font options
+library(gridExtra)
+```
+
+```{r read_data_intro}
+dat.trans <- read.xlsx("20.02.07_-_Blade_-_Ground_Travel_Costs_(Markup).xlsx", sheet = 1, startRow = 4, colNames = TRUE)
+names(dat.trans) <- lapply(dat.trans[1, ], as.character)
+
+dat.trans[dat.trans=="--"]<-NA
+
+dat.trans <- as.data.table(dat.trans[-1,])
+
+dat.trans <- dat.trans[`Transaction Type`!="Service & Technology Fee"]
+
+dat.trans_numeric <- c("Distance (mi)","Fare in USD (excl. Taxes)", "Tip in USD", "Transaction Amount in USD (incl. Taxes)", "Estimated Service and Technology Fee (incl. Taxes, if any) in USD","Duration (min)")
+dat.trans[,(dat.trans_numeric):=lapply(.SD, FUN = as.numeric), .SDcols  = dat.trans_numeric]
+
+#dat.trans[,`Transaction Timestamp (UTC)`:=as_datetime(as.numeric(`Transaction Timestamp (UTC)`)*3600*24, origin='1899-12-30')]
+
+dat.trans[,`Request Date (Local)`:=as_datetime(as.numeric(`Request Date (Local)`)*3600*24, origin='1899-12-30')]
+dat.trans[,`Request Date (Local)` :=gsub(x = `Request Date (Local)`, pattern = "T00:00:00Z",replacement = "")]
+dat.trans[,`Request Weekday (Local)` :=wday(`Request Date (Local)`,label = TRUE)]
+
+dat.trans[,`Request Time (Local)` :=format(strptime(`Request Time (Local)`, "%I:%M %p"), "%H:%M")]
+
+dat.trans[,`Request Hour (Local)`:=as.numeric(sub("\\:.*", "", `Request Time (Local)`))]
+
+dat.trans[,`Drop-off Date (Local)`:=as_datetime(as.numeric(`Drop-off Date (Local)`)*3600*24, origin='1899-12-30')]
+dat.trans[,`Drop-off Date (Local)` :=gsub(x = `Drop-off Date (Local)`, pattern = "T00:00:00Z",replacement = "")]
+
+
+dat.trans_drop <- c("Transaction Timestamp (UTC)","Request Date (UTC)","Request Time (UTC)","Drop-off Date (UTC)","Drop-off Time (UTC)","Taxes in USD","Taxes in Local Currency" ,"Employee ID","Expense Reason","Invoices","Payment Method","Local Currency Code","Fare in Local Currency (excl. Taxes)", "Tip in Local Currency", "Transaction Amount in Local Currency (incl. Taxes)","Request Timezone Offset from UTC" )
+
+dat.trans[,(dat.trans_drop):=NULL]
+
+dup.id = dat.trans[,.N,by = "Trip/Eats ID"][N!=1,`Trip/Eats ID`]
+
+trans = data.table()
+dat = rbind(dat.trans[`Trip/Eats ID` %in% dup.id,.(`Request Date (Local)` = min(`Request Date (Local)`),
+                                    `Request Time (Local)` = min(`Request Time (Local)`),
+                                    `Drop-off Date (Local)` = min(`Drop-off Date (Local)`),
+                                    `Drop-off Time (Local)` = min(`Drop-off Time (Local)`),
+                                    `First Name` = `First Name`[1],
+                                    `Last Name` = `Last Name`[1],
+                                    Email = Email[1],
+                                    Service = Service[1],
+                                    City = City[1],
+                                    `Distance (mi)` = `Distance (mi)`[1],
+                                    `Duration (min)` = `Duration (min)`[1],
+                                    `PICKUP ZIP` = `PICKUP ZIP`[1],
+                                    `DROP OFF ZIP` = `DROP OFF ZIP`[1],
+                                    `Expense Code` = `Expense Code`[1],
+                                    `Expense Memo` = `Expense Memo`[1],
+                                    Program = Program[1],
+                                    Group = Group[1],
+                                    `Transaction Type` = paste(unlist(t(`Transaction Type`)), collapse=" and "),
+                                    `Fare in USD (excl. Taxes)` = sum(as.numeric(`Fare in USD (excl. Taxes)`)),
+                                    `Tip in USD` = sum(as.numeric(`Tip in USD`)),
+                                    `Transaction Amount in USD (incl. Taxes)` = sum(as.numeric(`Transaction Amount in USD (incl. Taxes)`)),
+                                    `Estimated Service and Technology Fee (incl. Taxes, if any) in USD` = sum(as.numeric(`Estimated Service and Technology Fee (incl. Taxes, if any) in USD`)),
+                                    `Request Hour (Local)` = `Request Hour (Local)`[1],
+                                    `Request Weekday (Local)` = `Request Weekday (Local)`[1]), by = `Trip/Eats ID`], dat.trans[!(`Trip/Eats ID` %in% dup.id)])
+
+dat[, `Total Amount` := ifelse(is.na(`Transaction Amount in USD (incl. Taxes)`) & is.na(`Estimated Service and Technology Fee (incl. Taxes, if any) in USD` & is.na(`Tip in USD`)), NA_real_, rowSums(.SD, na.rm = T)), .SDcols = c("Transaction Amount in USD (incl. Taxes)", "Estimated Service and Technology Fee (incl. Taxes, if any) in USD","Tip in USD")]
+
+
+dat.code <- as.data.table(read.xlsx("20.02.07_-_Blade_-_Ground_Travel_Costs_(Markup).xlsx", sheet = 2, colNames = TRUE))
+setnames(x = dat.code, old = "Expense.Code", new = "Expense Code")
+
+
+dat.emp <- as.data.table(read.xlsx("20.02.07_-_Blade_-_Ground_Travel_Costs_(Markup).xlsx", sheet = 3, colNames = TRUE))
+dat.emp[,Alternative:=NULL]
+
+```
+
+
+# Executive Summary
+
+The goal of the report is to use the analytical techniques and frameworks to develop insights about the company’s employees and expenses, which could then be leveraged to reduce the cost of employee ground-travel. The analysis is based on the data set for a portion of Blade’s ground-travel expenses for June – Aug 2019. Top 3 conclusions from the data:
+
+**Conclusion 1:** Different Services have different average transaction amount either by distance or by duration. Also, on average, different expense reason would cost differently per transaction.
+
+**Conclusion 2:** In terms of the total transaction amount and the total number of transactions, New York City ranks the highest, followed by NYC suburbs. However, NYC has a relatively low average transaction amount, while NYC suburs ranks the highest.
+
+**Conclusion 3:** The average transaction amount is the highest on Sunday, while the number of transactions on Friday is the highest.
+
+# Reasoning and Backup {.tabset .tabset-fade}
+
+## Conclusion 1
+
+**Conclusion 1:** Different Services have different average transaction amount either by distance or by duration. Also, on average, different expense reason would cost differently per transaction.
+
+Below is the analysis:
+
+**1. Expenses by Program**
+
+```{r Conclusion 1.0}
+library(RColorBrewer)
+m = dat[!is.na(Program),.(Sum_Amount = sum(`Total Amount`, na.rm = TRUE)),by = Program]
+
+ggplot(m, aes(x="", y=Sum_Amount, fill=Program)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  scale_fill_brewer(palette="Set3")+
+  
+  
+  theme_void() # remove background, grid, numeric labels
+
+```
+
+Out of the total transaction amount, most of them are from "PAX TRAVEL" Program, followed by "CORP - Employee Rides" Program and "I'M RIDING" Program. These three programs also have the highest number of transactions among all the nine programs. 
+
+**2. Expenses by Service**
+
+```{r Conclusion 1.1}
+m = dat[`Distance (mi)`!=0 & `Duration (min)`!=0,.(N = .N, Mean_Amount_by_distance = round(mean(`Total Amount`/`Distance (mi)`, na.rm = TRUE),2), Mean_Amount_by_duration = round(mean(`Total Amount`/`Duration (min)`, na.rm = TRUE),2)),by = Service]
+setorderv(m,"N",-1)
+datatable(m)
+```
+
+Most of the transactions are using the service of "Travel | UberX", while some other services have only less than 5 transactions. On average, the service of "Travel | Premium SUV" would cost the most by distance (per mi) compared to others and the service of "Travel | Black SUV" would cost the most by duration (per min) compared to others.
+
+**3. Expenses by Reason**
+
+```{r Conclusion 1.2}
+## Merge by code
+dat.trans.code = merge(dat[!is.na(`Expense Code`),], dat.code, by = "Expense Code")
+
+Total_Transaction_by_expense_code <- dat.trans.code %>% group_by(`Description.(optional)`) %>%
+                summarise(Total_Amount=mean(`Total Amount`)) %>% ungroup
+
+##Visualizing summary data
+p1 = Total_Transaction_by_expense_code %>% 
+ ggplot(aes(reorder(`Description.(optional)`,Total_Amount),Total_Amount,fill=`Description.(optional)`))+
+  geom_col(show.legend = FALSE,color="black")+
+geom_text(aes(label=comma(Total_Amount)),size=3,hjust=1,color="black")+
+  scale_fill_brewer(palette = "Paired")+
+  coord_flip()+
+  theme_classic()+
+  labs(title = "Mean Transaction Amount",x="Expense Description",y= "Mean Transaction Amount")
+
+##Visualizing summary data
+p2 = dat.trans.code %>% group_by(`Description.(optional)`) %>%
+                summarise(n.m=n()) %>% 
+  ungroup %>% 
+ ggplot(aes(reorder(`Description.(optional)`,n.m),n.m,fill=`Description.(optional)`))+
+  geom_col(show.legend = FALSE,color="black")+
+geom_text(aes(label=comma(n.m)),size=3,hjust=1,color="black")+
+  scale_fill_brewer(palette = "Paired")+
+  coord_flip()+
+  theme_classic()+
+  labs(title = "Number of Transactions",x="Expense Description",y= "Number of Transactions")
+
+grid.arrange(p1, p2, ncol = 1)
+```
+
+Among the 12 expense reasons, on average, business meeting would cost the most per transaction, when most of the transactions came from *Ground Travel due to Weather Issues*. 
+
+
+## Conclusion 2 
+
+**Conclusion 2:** In terms of the total transaction amount and the total number of transactions, New York City ranks the highest, followed by NYC suburbs. However, NYC has a relatively low average transaction amount, while NYC suburs ranks the highest.
+
+Below is the analysis:
+
+**1. Expenses of each employee**
+
+Now let’s do some investigation regarding employees and their espenses We will start by computing the transaction times, the total and average expenses amount by employee ID.
+
+```{r Conclusion 2.1}
+m = dat[,.(N = .N, Total_Amount = sum(`Total Amount`)), by = `Last Name`]
+m[, Avg_Amount := round(Total_Amount/N,2)]
+m = merge(m, dat.emp, by.x = "Last Name", by.y = "Alternative" )[,`Last Name`:=NULL]
+setcolorder(m,c("Last.Name", "First.Name","lookup","N","Total_Amount","Avg_Amount"))
+setorderv(m, "N", -1)
+datatable(m)
+```
+
+Among the 56 employees, McNeil Torey has the greatest number of transactions and the highest total transaction amount, even though McNeil Torey doesn't have the highest average transaction amount. Meyer Joseph only has 7 transactions but on average, the transaction amount is the highest, almost twice as much as the second highest average transaction amount from Friedman Madison.
+
+**2. Expenses of each city**
+
+```{r Conclusion 2.2}
+m = dat[,.(Sum_Amount = sum(`Total Amount`, na.rm = TRUE)),by = City]
+
+ggplot(m, aes(x="", y=Sum_Amount, fill=City)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  scale_fill_brewer(palette="Set3")+
+  
+  
+  theme_void() # remove background, grid, numeric labels
+
+```
+
+Out of the total transaction amount, most of them are from New York City, followed by NYC suburbs.
+
+```{r Conclusion 2.3}
+m = dat[,.(N = .N, Mean_Amount = mean(`Total Amount`, na.rm = TRUE)),by = City]
+setorderv(m, "Mean_Amount", -1)
+# make room for both axes ; adjust as necessary
+par(mar=c(5, 5, 5, 7) + 0.2) 
+
+# plot the bars first with no annotations and specify limits for y
+barplot(height = m[,Mean_Amount], names = m[,City], col="#EC8C32",  axes=FALSE, main = "Transactions by City", xlab="", ylab="Mean Transaction Amount", ylim=c(0, max(m[,Mean_Amount])),border = NA, las=2, cex.names=.75)
+
+# now make the left axis
+axis(2, ylim=c(0, max(m[,Mean_Amount])), col="#EC8C32", las=1)
+
+# start a new plot
+par(new=TRUE)
+
+# plot the line; adjust lwd as necessary
+plot(x=1:12, y=m[,N], xlab="", ylab="", axes=FALSE, type="l", ylim=c(0,max(m[,N])), lwd=5,col = "#5971BC")
+
+# annotate the second axis
+axis(4, ylim=c(0,max(m[,N])), col="#5971BC", col.axis="Black", las=1)
+mtext("Number of Transactions", side = 4, line = 3, col = "Black")
+
+
+```
+
+Also, most transactions happened in New York City, followed by NYC suburbs. NYC suburbs has the highest average transaction amount followed by London and Connecticut, which do not have a high number transactions. This makes sense because the value of the per diems varies with different locations. New York City is expensive compared to Las Vegas, for example. Smaller, non-resort areas are even more affordable.
+
+## Conclusion 3 
+
+**Conclusion 3:** The average transaction amount is the highest on Sunday, while the number of transactions on Friday is the highest. Normally on workdays, the peak duration within a day is from 18:00 to 23:00.
+
+Below is the analysis:
+
+**1. Expenses of each day**
+
+```{r Conclusion 3.1}
+## Summarizing by day
+Total_Transaction_by_day <- dat %>% group_by(`Request Weekday (Local)`) %>%
+                summarise(Total_Amount=mean(`Total Amount`)) %>% ungroup
+##Visualizing summary data
+p1 = Total_Transaction_by_day %>% 
+ ggplot(aes(reorder(`Request Weekday (Local)`,Total_Amount),Total_Amount,fill=`Request Weekday (Local)`))+
+  geom_col(show.legend = FALSE,color="black")+
+geom_text(aes(label=comma(Total_Amount)),size=3,hjust=1,color="black")+
+  scale_fill_brewer(palette = "Paired")+
+  coord_flip()+
+  theme_classic()+
+  labs(title = "Mean Transaction Amount",x="Weekday of the week",y= "Mean Transaction Amount")
+
+##Visualizing summary data
+p2 = dat %>% group_by(`Request Date (Local)`) %>%
+                summarise(n=n(),weekday = `Request Weekday (Local)`[1]) %>% 
+  group_by(weekday) %>%
+  summarize(n.m=mean(n)) %>%
+  ungroup %>% 
+ ggplot(aes(reorder(weekday,n.m),n.m,fill=weekday))+
+  geom_col(show.legend = FALSE,color="black")+
+geom_text(aes(label=comma(n.m)),size=3,hjust=1,color="black")+
+  scale_fill_brewer(palette = "Paired")+
+  coord_flip()+
+  theme_classic()+
+  labs(title = "Number of Transactions",x="Weekday of the week",y= "Number of Transactions")
+
+grid.arrange(p1, p2, nrow = 1)
+```
+
+On average, on Friday, the total number of orders would be the highest, while on Sunday, the total transaction amount ranks the highest. Since the total number of orders on Sunday is relatively lower than others, the expense per transaction on Sunday is relatively higher than the others.
+
+**2. Expenses by day of week and hour**
+
+```{r Conclusion 3.2}
+## Visualizing
+dat %>% group_by(`Request Date (Local)`,`Request Hour (Local)`) %>%
+                summarise(n=n(),weekday = `Request Weekday (Local)`[1], hour = `Request Hour (Local)`[1]) %>% 
+  group_by(weekday,hour) %>%
+  summarize(n.m=mean(n)) %>%
+  ungroup %>%
+  ggplot(aes(x=hour,y=n.m,group=weekday,color=weekday)) + 
+  geom_point(size=3) + 
+  geom_line(size=0.5) + 
+  facet_wrap(~weekday,nrow=1) + 
+  labs(title = "Number of Transactions by Day of Week and Hour",
+       x = "Number of Transactions Per Hour", y = "Day of Week") +
+  theme(legend.position="none")+
+  scale_x_discrete(breaks=c(0,4, 8, 12, 16, 20))
+```
+
+From Tuesday to Friday, the number of orders per hour on average would be peak during 18:00 to 23:00, while on Monday, the peak period is from 0 to 4:00. On Saturday, the number of orders within a day is lower than that of the other weekdays.
+
+
+```{r Conclusion 3.3}
+## Summarizing by day and hour
+Total_Transaction_by_day_hour <- dat %>% group_by(`Request Weekday (Local)`,`Request Hour (Local)`) %>%
+  summarise(Total_Amount=mean(`Total Amount`)) %>% ungroup()
+
+## Visualizing
+col1 = "#d8e1cf" 
+col2 = "#438484"
+ggplot(Total_Transaction_by_day_hour[Total_Transaction_by_day_hour$Total_Amount != 0,], aes(`Request Hour (Local)`, `Request Weekday (Local)`)) + geom_tile(aes(fill = Total_Amount),colour = "white", na.rm = TRUE) +
+  scale_fill_gradient(low = col1, high = col2) +  
+  guides(fill=guide_legend(title="Mean Transaction Amount")) +
+  theme_bw() + theme_minimal() + 
+  labs(title = "Mean Transaction Amount by Day of Week and Hour",
+       x = "Mean Transaction Amount Per Hour", y = "Day of Week") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+```
+
+The average transaction amount per hour at 20:00 on Sunday is the highest, compared to other periods.
+
+# Action Items
+
+**1. Use cheaper service:** For long-distance travel, encourage employees to avoid using "Travel | Premium SUV", "Travel | Black SUV", and "Travel | Premium". Encouraging use of affordable ground transportation options (including public transportation) can reduce costs in this often-overlooked expense category.
+
+**2. Use virtual meetings, services such as Skype for Business, and videos:**  Business meeting always costs the most, so in order to reduce the cost, company should consider switching to virtual meetings if possible. Webinars work well for various kinds of training, especially seminars that allow multiple employees to attend.
+
+**3. Set up budget for each employee/department** Ask adult employees to make timely reservations, budget expenses on their business trips, and explore options other than travel for meetings and training.
+
+
