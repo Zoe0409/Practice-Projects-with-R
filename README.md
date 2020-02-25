@@ -5,3 +5,7 @@ This repository contains the projects that I was working on to learn and practic
 List of projects:
 
 **1. Blade’s ground-travel expenses analysis**: Data Visualization, Interactive Rmarkdown. ***(Personal Interest)***
+
+**2. Online Education Platform Evaluation**: Data Table. ***(Applied Data Science Assignment)***
+
+**3. Electronic Health Records Analysis**: Panel Data. ***(Applied Data Science Assignment)***
