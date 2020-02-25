@@ -9,3 +9,5 @@ List of projects:
 **2. Online Education Platform Evaluation**: Data Table. ***(Applied Data Science Assignment)***
 
 **3. Electronic Health Records Analysis**: Panel Data. ***(Applied Data Science Assignment)***
+
+**4. Social Media User Behavior**: Data Calculation. ***(Applied Data Science Assignment)***
