@@ -11,3 +11,5 @@ List of projects:
 **3. Electronic Health Records Analysis**: Panel Data. ***(Applied Data Science Assignment)***
 
 **4. Social Media User Behavior**: Data Calculation. ***(Applied Data Science Assignment)***
+
+**5. Building a Reporting Engine**: Data Calculation, Data Visualization, R Shiny. ***(Applied Data Science Assignment)***
