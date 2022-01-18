@@ -1,5 +1,3 @@
-![Hits](https://hitcounter.pythonanywhere.com/count/tag.svg?url=https%3A%2F%2Fgithub.com%2FZoe0409%2FPractice-Projects-with-R)
-
 # Practice-Projects-with-R
 
 This repository contains the projects that I was working on to learn and practice my R skills.
